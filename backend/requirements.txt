@@ -2,7 +2,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 sqlmodel==0.0.21
 python-dotenv==1.0.1
-yt-dlp==2024.10.7
+yt-dlp>=2026.8.19
 faster-whisper==1.0.3
 opencv-python-headless==4.10.0.84
 numpy==1.26.4

@@ -59,9 +59,22 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ youtube_url: url }),
       });
+      if (!res.ok) {
+        throw new Error(`Failed to create job: ${res.statusText}`);
+      }
       const data: Job = await res.json();
       setJob(data);
       pollJob(data.id);
+    } catch (error) {
+      console.error(error);
+      setJob({
+        id: 0,
+        youtube_url: url,
+        status: "failed",
+        progress_message: null,
+        error: error instanceof Error ? error.message : String(error),
+        clips: [],
+      });
     } finally {
       setSubmitting(false);
     }
@@ -71,7 +84,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen flex flex-col items-center px-6 py-16">
-      <h1 className="text-3xl font-bold mb-2">ClipForge</h1>
+      <h1 className="text-3xl font-bold mb-2">Pungol</h1>
       <p className="text-neutral-400 mb-8">
         Paste a YouTube URL, get back ranked vertical clips with captions.
       </p>
