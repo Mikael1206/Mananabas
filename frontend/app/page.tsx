@@ -39,12 +39,16 @@ export default function Home() {
   const pollJob = (jobId: number) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
-      const res = await fetch(`${API_URL}/api/jobs/${jobId}`);
-      if (!res.ok) return;
-      const data: Job = await res.json();
-      setJob(data);
-      if (data.status === "done" || data.status === "failed") {
-        stopPolling();
+      try {
+        const res = await fetch(`${API_URL}/api/jobs/${jobId}`);
+        if (!res.ok) return;
+        const data: Job = await res.json();
+        setJob(data);
+        if (data.status === "done" || data.status === "failed") {
+          stopPolling();
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
       }
     }, 2500);
   };

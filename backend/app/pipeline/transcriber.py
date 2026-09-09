@@ -3,7 +3,7 @@ Transcribes a video's audio track locally using faster-whisper.
 No API cost, runs on CPU (slower) or CUDA GPU (fast) depending on config.
 """
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from faster_whisper import WhisperModel
 
@@ -39,12 +39,50 @@ class Segment:
 
 
 def transcribe(video_path: str) -> List[Segment]:
-    """Returns a list of segments, each with word-level timestamps."""
+    """Returns a list of segments, each with word-level timestamps.
+
+    Runs with VAD (Silero) to skip silence. If VAD filters out *all* audio
+    (common with music-heavy or cartoon audio that Silero doesn't recognize
+    as speech, which also crashes faster-whisper's language detection with
+    "max() iterable argument is empty"), retries with a lower VAD threshold
+    and finally without VAD at all.
+    """
     model = _get_model()
+
+    # Silero's default 0.5 threshold misses quiet/heavily-mixed speech
+    # (cartoons, music under dialogue). Fall back down the chain until
+    # some audio survives VAD.
+    for vad_threshold in (None, 0.3):
+        try:
+            segments = _transcribe(model, video_path, vad_threshold)
+            if segments:
+                return segments
+        except ValueError:
+            # Empty VAD-filtered audio crashes faster-whisper's language
+            # detection; fall through to the next attempt.
+            continue
+
+    return _transcribe(model, video_path, None, force_no_vad=True)
+
+
+def _transcribe(
+    model: WhisperModel,
+    video_path: str,
+    vad_threshold: Optional[float],
+    force_no_vad: bool = False,
+) -> List[Segment]:
+    if force_no_vad:
+        vad_filter, vad_parameters = False, None
+    elif vad_threshold is None:
+        vad_filter, vad_parameters = True, None
+    else:
+        vad_filter, vad_parameters = True, {"threshold": vad_threshold}
+
     segments_iter, _info = model.transcribe(
         video_path,
         word_timestamps=True,
-        vad_filter=True,  # skips silence, improves segment quality
+        vad_filter=vad_filter,
+        vad_parameters=vad_parameters,
     )
 
     segments: List[Segment] = []

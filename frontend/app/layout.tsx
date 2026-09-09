@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "ClipForge",
+  title: "Pungol",
   description: "Turn long YouTube videos into short, ready-to-post clips.",
 };
 

@@ -12,7 +12,7 @@ from app.jobs import run_job
 from app.models import Job
 from app.schemas import JobCreateRequest, JobRead
 
-app = FastAPI(title="ClipForge API")
+app = FastAPI(title="Pungol API")
 
 app.add_middleware(
     CORSMiddleware,

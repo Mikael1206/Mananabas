@@ -38,7 +38,17 @@ def _extract_json(text: str) -> str:
     return match.group(0) if match else text
 
 
+def _require_key(env_var: str, key: str) -> None:
+    """Raise a clear error if an API key is missing/empty, so we never send
+    an invalid 'Bearer ' header that surfaces as a cryptic connection error."""
+    if not key:
+        raise ValueError(
+            f"{env_var} is not set. Add your API key to .env (see .env.example)."
+        )
+
+
 def _call_openai(prompt: str) -> str:
+    _require_key("OPENAI_API_KEY", settings.openai_api_key)
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -51,6 +61,7 @@ def _call_openai(prompt: str) -> str:
 
 
 def _call_anthropic(prompt: str) -> str:
+    _require_key("ANTHROPIC_API_KEY", settings.anthropic_api_key)
     import anthropic
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
@@ -63,6 +74,7 @@ def _call_anthropic(prompt: str) -> str:
 
 
 def _call_gemini(prompt: str) -> str:
+    _require_key("GEMINI_API_KEY", settings.gemini_api_key)
     import google.generativeai as genai
 
     genai.configure(api_key=settings.gemini_api_key)

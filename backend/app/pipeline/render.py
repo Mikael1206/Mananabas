@@ -1,11 +1,26 @@
 """
 Renders a final vertical clip: crops the source to 9:16 centered on the
 detected face position, trims to [start, end], and burns in the .ass
-captions. Requires ffmpeg to be installed and on PATH (not a pip package).
+captions.
+
+Requires ffmpeg. It uses a system ffmpeg if one is on PATH, otherwise
+falls back to the static binary bundled with the `imageio-ffmpeg` pip
+package (handy on machines where installing ffmpeg system-wide needs sudo).
 """
+import shutil
 import subprocess
 
 import cv2
+
+def _ffmpeg_exe() -> str:
+    """Return a usable ffmpeg binary: system one if present, else the
+    static build shipped with imageio-ffmpeg."""
+    system = shutil.which("ffmpeg")
+    if system:
+        return system
+    import imageio_ffmpeg
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
 
 
 def _get_dimensions(video_path: str):
@@ -43,7 +58,7 @@ def render_clip(
     vf = f"crop={crop_w}:{crop_h}:{x}:0,scale=1080:1920,ass={ass_path}"
 
     cmd = [
-        "ffmpeg", "-y",
+        _ffmpeg_exe(), "-y",
         "-ss", str(start),
         "-i", source_path,
         "-t", str(duration),

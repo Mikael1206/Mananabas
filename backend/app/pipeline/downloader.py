@@ -6,8 +6,24 @@ YouTube's Terms of Service depending on how it's used. This tool is intended
 for clipping videos you own or have explicit permission to repurpose.
 """
 import os
+import shutil
 
 import yt_dlp
+
+
+def _ffmpeg_location() -> str:
+    """Return a path to a usable ffmpeg binary for yt-dlp's format merging.
+
+    yt-dlp spawns `ffmpeg` from PATH to merge separate video+audio streams.
+    On machines without a system ffmpeg, fall back to the static binary
+    shipped with the imageio-ffmpeg pip package.
+    """
+    system = shutil.which("ffmpeg")
+    if system:
+        return system
+    import imageio_ffmpeg
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
 
 
 def download_video(url: str, out_dir: str) -> str:
@@ -16,9 +32,15 @@ def download_video(url: str, out_dir: str) -> str:
     out_path = os.path.join(out_dir, "source.%(ext)s")
 
     ydl_opts = {
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        # Prefer H.264 (avc1): OpenCV (face detection) and most ffmpeg builds
+        # can't decode AV1/VP9 reliably. The `/best` fallback rarely triggers.
+        "format": (
+            "bestvideo[height<=1080][ext=mp4][vcodec^=avc1]"
+            "+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        ),
         "outtmpl": out_path,
         "merge_output_format": "mp4",
+        "ffmpeg_location": _ffmpeg_location(),
         "quiet": True,
         "no_warnings": True,
     }
