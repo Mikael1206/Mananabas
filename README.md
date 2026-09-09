@@ -1,4 +1,4 @@
-# ClipForge (MVP scaffold)
+# Pungol (MVP scaffold)
 
 Turn a long-form YouTube video into ranked, captioned, vertical (9:16) clips.
 
