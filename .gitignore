@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.db
+
+# Env files
+.env
+.env.local
+
+# Media output
+backend/media/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# OS
+.DS_Store

@@ -1,0 +1,98 @@
+import os
+import traceback
+
+from sqlmodel import Session
+
+from app.config import settings
+from app.database import engine
+from app.models import Job, JobStatus, Clip
+from app.pipeline import downloader, transcriber, highlighter, reframe, captions, render
+
+
+def run_job(job_id: int) -> None:
+    """
+    Runs the full pipeline for a job. Called in a background thread from the
+    API layer. Each stage updates job.status so the frontend can poll progress.
+
+    NOTE: for production scale, replace the background-thread call site in
+    main.py with a Celery task using this same function body — nothing here
+    needs to change.
+    """
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            return
+
+        job_dir = os.path.join(settings.media_dir, str(job_id))
+        os.makedirs(job_dir, exist_ok=True)
+
+        try:
+            # 1. Download
+            job.status = JobStatus.downloading
+            job.progress_message = "Downloading source video..."
+            session.add(job)
+            session.commit()
+
+            video_path = downloader.download_video(job.youtube_url, job_dir)
+            job.video_path = video_path
+            session.add(job)
+            session.commit()
+
+            # 2. Transcribe
+            job.status = JobStatus.transcribing
+            job.progress_message = "Transcribing audio..."
+            session.add(job)
+            session.commit()
+
+            segments = transcriber.transcribe(video_path)
+            transcript_text = transcriber.transcript_to_plain_text(segments)
+
+            # 3. Rank highlights via LLM
+            job.status = JobStatus.ranking
+            job.progress_message = "Selecting best moments..."
+            session.add(job)
+            session.commit()
+
+            highlights = highlighter.select_highlights(transcript_text)
+
+            # 4. Reframe + caption + render each highlight
+            job.status = JobStatus.rendering
+            session.add(job)
+            session.commit()
+
+            for idx, h in enumerate(highlights[: settings.max_clips_per_job]):
+                job.progress_message = f"Rendering clip {idx + 1}/{len(highlights)}..."
+                session.add(job)
+                session.commit()
+
+                start, end = float(h["start"]), float(h["end"])
+                center_x = reframe.find_crop_center_x(video_path, start, end)
+
+                ass_path = os.path.join(job_dir, f"clip_{idx}.ass")
+                captions.build_ass_for_clip(segments, start, end, ass_path)
+
+                out_path = os.path.join(job_dir, f"clip_{idx}.mp4")
+                render.render_clip(video_path, start, end, center_x, ass_path, out_path)
+
+                clip = Clip(
+                    job_id=job.id,
+                    title=h.get("title", f"Clip {idx + 1}"),
+                    hook=h.get("hook"),
+                    score=h.get("score"),
+                    start=start,
+                    end=end,
+                    file_path=out_path,
+                )
+                session.add(clip)
+                session.commit()
+
+            job.status = JobStatus.done
+            job.progress_message = "Done."
+            session.add(job)
+            session.commit()
+
+        except Exception as e:  # noqa: BLE001 - MVP: surface any failure to the UI
+            job.status = JobStatus.failed
+            job.error = f"{e}\n{traceback.format_exc()}"
+            session.add(job)
+            session.commit()
