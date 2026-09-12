@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.6-flash"
 
     # Whisper
-    whisper_model_size: str = "tiny"
+    whisper_model_size: str = "small"
     whisper_device: str = "cpu"
+    # Empty string = auto-detect. Set to e.g. "tl" or "en" to force a language.
+    whisper_language: str = ""
 
     # Storage
     media_dir: str = "./media"

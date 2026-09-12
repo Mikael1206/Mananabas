@@ -38,7 +38,7 @@ class Segment:
     words: List[Word]
 
 
-def transcribe(video_path: str) -> List[Segment]:
+def transcribe(video_path: str, language: Optional[str] = None) -> List[Segment]:
     """Returns a list of segments, each with word-level timestamps.
 
     Runs with VAD (Silero) to skip silence. If VAD filters out *all* audio
@@ -48,13 +48,14 @@ def transcribe(video_path: str) -> List[Segment]:
     and finally without VAD at all.
     """
     model = _get_model()
+    resolved_language = language or (settings.whisper_language or None)
 
     # Silero's default 0.5 threshold misses quiet/heavily-mixed speech
     # (cartoons, music under dialogue). Fall back down the chain until
     # some audio survives VAD.
     for vad_threshold in (None, 0.3):
         try:
-            segments = _transcribe(model, video_path, vad_threshold)
+            segments = _transcribe(model, video_path, vad_threshold, language=resolved_language)
             if segments:
                 return segments
         except ValueError:
@@ -62,7 +63,7 @@ def transcribe(video_path: str) -> List[Segment]:
             # detection; fall through to the next attempt.
             continue
 
-    return _transcribe(model, video_path, None, force_no_vad=True)
+    return _transcribe(model, video_path, None, force_no_vad=True, language=resolved_language)
 
 
 def _transcribe(
@@ -70,6 +71,7 @@ def _transcribe(
     video_path: str,
     vad_threshold: Optional[float],
     force_no_vad: bool = False,
+    language: Optional[str] = None,
 ) -> List[Segment]:
     if force_no_vad:
         vad_filter, vad_parameters = False, None
@@ -78,11 +80,16 @@ def _transcribe(
     else:
         vad_filter, vad_parameters = True, {"threshold": vad_threshold}
 
-    segments_iter, _info = model.transcribe(
+    segments_iter, info = model.transcribe(
         video_path,
         word_timestamps=True,
         vad_filter=vad_filter,
         vad_parameters=vad_parameters,
+        language=language,
+    )
+    print(
+        f"Whisper language={info.language} "
+        f"probability={info.language_probability}"
     )
 
     segments: List[Segment] = []

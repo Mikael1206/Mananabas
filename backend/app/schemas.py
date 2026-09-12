@@ -7,6 +7,7 @@ from app.models import JobStatus
 
 class JobCreateRequest(BaseModel):
     youtube_url: HttpUrl
+    language: Optional[str] = None
 
 
 class ClipRead(BaseModel):
@@ -25,6 +26,7 @@ class ClipRead(BaseModel):
 class JobRead(BaseModel):
     id: int
     youtube_url: str
+    language: Optional[str]
     status: JobStatus
     progress_message: Optional[str]
     error: Optional[str]

@@ -44,7 +44,7 @@ def run_job(job_id: int) -> None:
             session.add(job)
             session.commit()
 
-            segments = transcriber.transcribe(video_path)
+            segments = transcriber.transcribe(video_path, language=job.language)
             transcript_text = transcriber.transcript_to_plain_text(segments)
 
             # 3. Rank highlights via LLM

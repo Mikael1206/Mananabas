@@ -388,3 +388,42 @@ Dialogue: 0,0:00:00.00,0:00:01.50,Default,{\\fad(120,80)}Test caption
     h = int(cap.get(__import__("cv2").CAP_PROP_FRAME_HEIGHT))
     cap.release()
     assert (w, h) == (1080, 1920)
+
+
+def test_transcribe_forwards_language_to_model(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline import transcriber as transcriber_mod
+
+    class FakeWord:
+        start = 0.0
+        end = 0.5
+        word = "hello"
+
+    class FakeSeg:
+        start = 0.0
+        end = 0.5
+        text = "hello"
+        words = [FakeWord()]
+
+    class FakeInfo:
+        language = "tl"
+        language_probability = 0.97
+
+    class FakeModel:
+        def __init__(self):
+            self.calls = []
+
+        def transcribe(self, video_path, **kwargs):
+            self.calls.append({"video_path": video_path, **kwargs})
+            return iter([FakeSeg()]), FakeInfo()
+
+    fake = FakeModel()
+    monkeypatch.setattr(transcriber_mod, "_get_model", lambda: fake)
+
+    segments = transcriber_mod.transcribe("/tmp/video.mp4", language="tl")
+
+    assert len(segments) == 1
+    assert segments[0].text == "hello"
+    assert fake.calls
+    assert fake.calls[0]["language"] == "tl"
+    assert fake.calls[0]["word_timestamps"] is True

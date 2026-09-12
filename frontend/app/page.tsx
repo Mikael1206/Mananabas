@@ -17,6 +17,7 @@ type Clip = {
 type Job = {
   id: number;
   youtube_url: string;
+  language?: string | null;
   status: string;
   progress_message: string | null;
   error: string | null;
@@ -25,6 +26,7 @@ type Job = {
 
 export default function Home() {
   const [url, setUrl] = useState("");
+  const [language, setLanguage] = useState("");
   const [job, setJob] = useState<Job | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -91,7 +93,7 @@ export default function Home() {
       const res = await fetch(`${API_URL}/api/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtube_url: url }),
+        body: JSON.stringify({ youtube_url: url, language }),
       });
       if (!res.ok) {
         let detail = res.statusText;
@@ -119,6 +121,7 @@ export default function Home() {
       setJob({
         id: 0,
         youtube_url: url,
+        language: language || null,
         status: "failed",
         progress_message: null,
         error: message,
@@ -189,6 +192,16 @@ export default function Home() {
           value={url}
           onChange={(e) => setUrl(e.target.value)}
         />
+        <select
+          className="rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 outline-none focus:border-neutral-400"
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+          aria-label="Transcription language"
+        >
+          <option value="">Auto-detect</option>
+          <option value="en">English</option>
+          <option value="tl">Filipino / Tagalog</option>
+        </select>
         <button
           onClick={submit}
           disabled={submitting || !url}

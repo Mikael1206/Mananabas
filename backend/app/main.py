@@ -50,7 +50,7 @@ def root():
 
 @app.post("/api/jobs", response_model=JobRead)
 def create_job(payload: JobCreateRequest, session: Session = Depends(get_session)):
-    job = Job(youtube_url=str(payload.youtube_url))
+    job = Job(youtube_url=str(payload.youtube_url), language=payload.language)
     session.add(job)
     session.commit()
     session.refresh(job)
