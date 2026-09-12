@@ -1,10 +1,12 @@
 """
-Sends the timestamped transcript to an LLM and asks it to pick the best
-short-form moments. Returns a plain list of dicts:
+Multi-provider orchestration: Three LLMs collaborate on highlight selection.
 
+1. OpenAI (gpt-4o-mini):      Fast moment detection from transcript
+2. Anthropic (claude-sonnet):  Rich title & hook generation via reasoning
+3. Gemini (flash):             Final validation, scoring, and ranking
+
+Returns a plain list of dicts:
     [{"start": 12.3, "end": 54.1, "title": "...", "hook": "...", "score": 87}, ...]
-
-Swap providers by changing LLM_PROVIDER in .env — no other code changes needed.
 """
 import json
 import re
@@ -12,23 +14,53 @@ from typing import List, Dict
 
 from app.config import settings
 
-PROMPT_TEMPLATE = """You are an expert short-form video editor who finds viral-worthy \
-moments in long videos for TikTok/Reels/Shorts.
+# Stage 1: OpenAI detects moment candidates (timestamps + raw content)
+DETECT_MOMENTS_PROMPT = """You are a video editor scanning a transcript for viral-worthy moments.
 
-Below is a timestamped transcript. Pick the {max_clips} best standalone moments. \
-Each moment must:
-- be between {min_sec} and {max_sec} seconds long
-- work on its own without needing earlier context
-- have a strong hook in the first 3 seconds (a question, bold claim, or surprising statement)
+Identify the {max_clips} best standalone moments that:
+- are between {min_sec} and {max_sec} seconds long
+- work without needing earlier context
+- have a strong hook in the first 3 seconds
 
-Return ONLY valid JSON, no markdown fences, no commentary, in this exact shape:
+Return ONLY JSON, no prose, in this exact shape:
 [
-  {{"start": <seconds float>, "end": <seconds float>, "title": "<short catchy title>", \
-"hook": "<the hook line/idea>", "score": <0-100 virality score>}}
+  {{"start": <float>, "end": <float>, "transcript_excerpt": "<key quote>"}}
 ]
 
 TRANSCRIPT:
 {transcript}
+"""
+
+# Stage 2: Anthropic crafts titles and hooks for each moment
+CRAFT_HOOKS_PROMPT = """You are a viral short-form video expert.
+
+For each moment below, write:
+- A catchy, concise title (5-8 words)
+- A compelling hook (the first sentence that grabs viewers)
+
+Moments:
+{moments}
+
+Return ONLY JSON:
+[
+  {{"start": <float>, "end": <float>, "title": "<title>", "hook": "<hook>"}}
+]
+"""
+
+# Stage 3: Gemini validates and scores the final clips
+VALIDATE_AND_SCORE_PROMPT = """You are a TikTok/Reels algorithm expert scoring viral potential.
+
+Review these clips and:
+1. Validate each has a proper hook and title
+2. Assign a virality score (0-100) based on hook strength, pacing, and engagement potential
+
+Clips:
+{clips}
+
+Return ONLY JSON (fix any formatting issues):
+[
+  {{"start": <float>, "end": <float>, "title": "<title>", "hook": "<hook>", "score": <0-100>}}
+]
 """
 
 
@@ -48,6 +80,7 @@ def _require_key(env_var: str, key: str) -> None:
 
 
 def _call_openai(prompt: str) -> str:
+    """Stage 1: Fast moment detection."""
     _require_key("OPENAI_API_KEY", settings.openai_api_key)
     from openai import OpenAI
 
@@ -55,12 +88,13 @@ def _call_openai(prompt: str) -> str:
     resp = client.chat.completions.create(
         model=settings.openai_model,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.4,
+        temperature=0.3,  # lower temp for consistent moment detection
     )
     return resp.choices[0].message.content
 
 
 def _call_anthropic(prompt: str) -> str:
+    """Stage 2: Rich title & hook generation using deep reasoning."""
     _require_key("ANTHROPIC_API_KEY", settings.anthropic_api_key)
     import anthropic
 
@@ -74,6 +108,7 @@ def _call_anthropic(prompt: str) -> str:
 
 
 def _call_gemini(prompt: str) -> str:
+    """Stage 3: Final validation, scoring, and ranking."""
     _require_key("GEMINI_API_KEY", settings.gemini_api_key)
     import google.generativeai as genai
 
@@ -84,32 +119,112 @@ def _call_gemini(prompt: str) -> str:
 
 
 def select_highlights(transcript_text: str) -> List[Dict]:
-    prompt = PROMPT_TEMPLATE.format(
+    """
+    Multi-provider orchestration with intelligent fallback:
+    1. OpenAI: Detect moment candidates (fast)
+    2. Anthropic: Craft compelling titles & hooks (reasoning-heavy)
+    3. Gemini: Validate, score, and rank (expert scoring)
+    
+    If any stage fails (quota exhausted, rate limit, etc.), the system
+    falls back to the next available provider for that stage.
+    """
+    detect_prompt = DETECT_MOMENTS_PROMPT.format(
         max_clips=settings.max_clips_per_job,
         min_sec=settings.clip_min_seconds,
         max_sec=settings.clip_max_seconds,
         transcript=transcript_text,
     )
-
-    provider = settings.llm_provider.lower()
-    if provider == "openai":
-        raw = _call_openai(prompt)
-    elif provider == "anthropic":
-        raw = _call_anthropic(prompt)
-    elif provider == "gemini":
-        raw = _call_gemini(prompt)
-    else:
-        raise ValueError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")
-
-    json_str = _extract_json(raw)
-    highlights = json.loads(json_str)
-
-    # basic sanity filtering
-    clean = []
-    for h in highlights:
+    
+    # Stage 1: Try OpenAI → Anthropic → Gemini for moment detection
+    print(f"Stage 1/3: Detecting moments...")
+    moments = []
+    for provider_name, provider_func in [
+        ("OpenAI", _call_openai),
+        ("Anthropic", _call_anthropic),
+        ("Gemini", _call_gemini),
+    ]:
         try:
-            if float(h["end"]) > float(h["start"]):
-                clean.append(h)
+            print(f"  Trying {provider_name}...")
+            raw_moments = provider_func(detect_prompt)
+            json_str = _extract_json(raw_moments)
+            moments = json.loads(json_str)
+            moments = [m for m in moments if "start" in m and "end" in m and float(m["end"]) > float(m["start"])]
+            if moments:
+                print(f"  ✓ {provider_name} found {len(moments)} moments")
+                break
+        except Exception as e:
+            print(f"  ✗ {provider_name} failed: {str(e)[:80]}...")
+            continue
+    
+    if not moments:
+        print("Warning: No moments detected by any provider, returning empty list")
+        return []
+    
+    print(f"Stage 2/3: Crafting titles & hooks for {len(moments)} moments...")
+    moments_json = json.dumps(moments, indent=2)
+    hook_prompt = CRAFT_HOOKS_PROMPT.format(moments=moments_json)
+    
+    # Stage 2: Try Anthropic → OpenAI → Gemini for hook generation
+    enhanced_moments = []
+    for provider_name, provider_func in [
+        ("Anthropic", _call_anthropic),
+        ("OpenAI", _call_openai),
+        ("Gemini", _call_gemini),
+    ]:
+        try:
+            print(f"  Trying {provider_name}...")
+            raw_hooks = provider_func(hook_prompt)
+            json_str = _extract_json(raw_hooks)
+            enhanced_moments = json.loads(json_str)
+            print(f"  ✓ {provider_name} crafted hooks")
+            break
+        except Exception as e:
+            print(f"  ✗ {provider_name} failed: {str(e)[:80]}...")
+            continue
+    
+    # Merge with defaults if all providers failed
+    if not enhanced_moments:
+        enhanced_moments = moments
+    
+    for em in enhanced_moments:
+        em.setdefault("title", f"Clip {len(moments)}")
+        em.setdefault("hook", "")
+        em.setdefault("score", 50)  # default score before Gemini validation
+    
+    print(f"Stage 3/3: Validating and scoring...")
+    clips_json = json.dumps(enhanced_moments, indent=2)
+    score_prompt = VALIDATE_AND_SCORE_PROMPT.format(clips=clips_json)
+    
+    # Stage 3: Try Gemini → OpenAI → Anthropic for final scoring
+    final_clips = []
+    for provider_name, provider_func in [
+        ("Gemini", _call_gemini),
+        ("OpenAI", _call_openai),
+        ("Anthropic", _call_anthropic),
+    ]:
+        try:
+            print(f"  Trying {provider_name}...")
+            raw_scores = provider_func(score_prompt)
+            json_str = _extract_json(raw_scores)
+            final_clips = json.loads(json_str)
+            print(f"  ✓ {provider_name} scored clips")
+            break
+        except Exception as e:
+            print(f"  ✗ {provider_name} failed: {str(e)[:80]}...")
+            continue
+    
+    # Use enhanced_moments as fallback if scoring failed
+    if not final_clips:
+        final_clips = enhanced_moments
+    
+    # Final sanity check
+    clean = []
+    for clip in final_clips:
+        try:
+            if float(clip["end"]) > float(clip["start"]):
+                clean.append(clip)
         except (KeyError, TypeError, ValueError):
             continue
+    
+    print(f"✓ Pipeline complete: {len(clean)} clips ready")
     return clean
