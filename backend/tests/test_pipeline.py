@@ -16,12 +16,11 @@ import importlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -258,142 +257,134 @@ def test_ass_handles_partial_word_overlap_at_clip_boundaries(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Reframe / crop center (no real video required)
+# Reframe / crop center + render filters
 # ---------------------------------------------------------------------------
-def _patch_run_pipeline_env_gated(monkeypatch):
-    """Install lightweight, import-time-safe patches for cv2 and subprocess.run
-    inside the env-gated pipeline module under test."""
-    import run_pipeline_env_gated as target
+import numpy as np
 
-    importlib.reload(target)
-    mock_cv2 = MagicMock()
-    mock_run = MagicMock()
-    target.cv2 = mock_cv2
-    target.subprocess = MagicMock(run=mock_run)
-    return target, mock_cv2, mock_run
+from app.pipeline import reframe as reframe_mod
+from app.pipeline import render as render_mod
 
 
-def test_find_crop_center_returns_0_5_when_no_faces_detected(monkeypatch):
-    fake_video = Path(tempfile.mktemp(suffix=".mp4"))
-    try:
-        target, cv2, _ = _patch_run_pipeline_env_gated(monkeypatch)
-        mock_cap = MagicMock()
-        mock_cap.get.return_value = 0  # not 30; we just need a float for fps
-        mock_cap.read.return_value = (False, None)  # no frames at all
-        mock_cap.release = MagicMock()
-        cv2.VideoCapture.return_value = mock_cap
-
-        center = target._find_crop_center_x(fake_video, 0.0, 5.0)
-        assert center == pytest.approx(0.5)
-    finally:
-        if fake_video.exists():
-            fake_video.unlink()
+def test_aggregate_centers_prefers_faces():
+    assert reframe_mod.aggregate_centers([0.2, 0.4], [0.9], [0.1]) == pytest.approx(0.3)
 
 
-def test_find_crop_center_uses_largest_face(monkeypatch):
-    fake_video = Path(tempfile.mktemp(suffix=".mp4"))
-    try:
-        target, cv2, _ = _patch_run_pipeline_env_gated(monkeypatch)
-
-        cv2.CAP_PROP_FPS = 0
-        cv2.CAP_PROP_FRAME_WIDTH = 1
-        cv2.CAP_PROP_FRAME_HEIGHT = 2
-
-        mock_cap = MagicMock()
-
-        def _cap_get(property_):
-            if property_ == cv2.CAP_PROP_FPS:
-                return 30.0
-            if property_ == cv2.CAP_PROP_FRAME_WIDTH:
-                return 1920.0
-            if property_ == cv2.CAP_PROP_FRAME_HEIGHT:
-                return 1080.0
-            return 0.0
-
-        mock_cap.get.side_effect = _cap_get
-        cv2.VideoCapture.return_value = mock_cap
-
-        frame1 = MagicMock()
-        frame1.shape = (1080, 1920, 3)
-        frame2 = MagicMock()
-        frame2.shape = (1080, 1920, 3)
-
-        mock_cap.read.side_effect = [(True, frame1), (True, frame2)] + [(False, None)] * 60
-
-        gray1 = MagicMock()
-        gray2 = MagicMock()
-        cv2.cvtColor.side_effect = [gray1, gray2]
-
-        cascade = MagicMock()
-        cascade.detectMultiScale.side_effect = [
-            [(100, 100, 200, 200)],  # center 200/1920
-            [(300, 300, 500, 500)],  # center 550/1920
-        ]
-        cv2.CascadeClassifier.return_value = cascade
-
-        import run_pipeline_env_gated as real_target
-        import importlib
-        importlib.reload(real_target)
-        _test_cv2 = MagicMock()
-        _test_cv2.CAP_PROP_FRAME_WIDTH = 1
-        _test_cv2.CAP_PROP_FRAME_HEIGHT = 2
-        _test_cv2.CAP_PROP_FPS = 0
-
-        _cap = MagicMock()
-        def _get(prop):
-            if prop == _test_cv2.CAP_PROP_FPS:
-                return 30.0
-            if prop == _test_cv2.CAP_PROP_FRAME_WIDTH:
-                return 1920.0
-            if prop == _test_cv2.CAP_PROP_FRAME_HEIGHT:
-                return 1080.0
-            return 0.0
-        _cap.get.side_effect = _get
-        _cap.set.return_value = None
-        _cap.release = MagicMock()
-        _test_cv2.VideoCapture.return_value = _cap
-
-        _frame1 = MagicMock()
-        _frame1.shape = (1080, 1920, 3)
-        _frame2 = MagicMock()
-        _frame2.shape = (1080, 1920, 3)
-        _cap.read.side_effect = [(True, _frame1), (True, _frame2)] + [(False, None)] * 60
-
-        _gray1 = MagicMock()
-        _gray2 = MagicMock()
-        _test_cv2.cvtColor.side_effect = [_gray1, _gray2]
-
-        _cascade = MagicMock()
-        _cascade.detectMultiScale.side_effect = [
-            [(100, 100, 200, 200)],  # center 200/1920
-            [(300, 300, 500, 500)],  # center 550/1920
-        ]
-        _test_cv2.CascadeClassifier.return_value = _cascade
-
-        import sys
-        _saved_cv2 = sys.modules.get('cv2', None)
-        sys.modules['cv2'] = _test_cv2
-        try:
-            actual = real_target._find_crop_center_x(fake_video, 0.0, 2.0, sample_count=2)
-        finally:
-            sys.modules['cv2'] = _saved_cv2
-        # Per-frame face geometry configured above:
-        #   frame 0: fx=100, fw=200 -> center 200/1920
-        #   frame 1: fx=300, fw=500 -> center 550/1920
-        expected = (200 / 1920 + 550 / 1920) / 2
-        print("crop test actual:", actual, "expected:", expected)
-        assert actual == pytest.approx(expected)
-    finally:
-        if fake_video.exists():
-            fake_video.unlink()
+def test_aggregate_centers_falls_back_to_motion_and_energy():
+    # 0.6 * 0.8 + 0.4 * 0.2 = 0.56
+    assert reframe_mod.aggregate_centers([], [0.8], [0.2]) == pytest.approx(0.56)
 
 
-def _patch_run_pipeline_env_gated_no_monkeypatch():
-    import run_pipeline_env_gated as target
-    importlib.reload(target)
-    mock_cv2 = MagicMock()
-    mock_run = MagicMock()
-    mock_subprocess = MagicMock(run=mock_run)
-    target.cv2 = mock_cv2
-    target.subprocess = mock_subprocess
-    return target, mock_subprocess, mock_cv2
+def test_aggregate_centers_empty_is_center():
+    assert reframe_mod.aggregate_centers([], [], []) == pytest.approx(0.5)
+
+
+def test_energy_center_tracks_detailed_object():
+    frame = np.zeros((120, 200, 3), dtype=np.uint8)
+    # High-frequency checkerboard on the right side = the "subject".
+    x0, x1 = 140, 190
+    patch = np.indices((80, x1 - x0)).sum(axis=0) % 2 * 255
+    frame[20:100, x0:x1, :] = patch[:, :, None].astype(np.uint8)
+    cx = reframe_mod.energy_center_x(frame)
+    assert cx > 0.6
+
+
+def test_crop_window_centers_on_subject_and_clamps():
+    crop_w, crop_h, x = render_mod.crop_window(1920, 1080, 0.2)
+    assert crop_h == 1080
+    assert crop_w == int(1080 * 9 / 16)
+    # Subject at 20% of 1920 = 384; window should start near that minus half width.
+    assert x == max(0, int(0.2 * 1920 - crop_w / 2))
+    _, _, x_right = render_mod.crop_window(1920, 1080, 0.99)
+    assert x_right == 1920 - crop_w
+
+
+def test_video_filter_includes_effects_and_animation():
+    vf = render_mod.build_video_filter(608, 1080, 100, duration=20.0, ass_path="/tmp/clip.ass", fps=30)
+    assert "crop=608:1080:100:0" in vf
+    assert "zoompan=" in vf
+    assert "eq=" in vf
+    assert "unsharp=" in vf
+    assert "vignette=" in vf
+    assert "fade=t=in" in vf
+    assert "fade=t=out" in vf
+    assert "ass=" in vf
+
+
+def test_audio_filter_includes_bgm_and_stings():
+    af = render_mod.build_audio_filter(20.0, has_speech=True)
+    assert "[0:a]" in af
+    assert "amix=inputs=4" in af
+    assert "[open]" in af
+    assert "adelay=" in af
+    assert "[end]" in af
+    assert "[aout]" in af
+
+
+def test_caption_animation_tags_are_applied(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import build_ass_for_clip, _animate_caption
+    from app.pipeline.transcriber import Segment, Word
+
+    segments = [
+        Segment(
+            start=10.0,
+            end=14.0,
+            text="First segment.",
+            words=[
+                Word(start=10.0, end=10.5, text="First"),
+                Word(start=10.5, end=11.0, text="segment"),
+                Word(start=11.0, end=11.5, text="one"),
+                Word(start=11.5, end=12.0, text="."),
+            ],
+        )
+    ]
+    out_path = tmp_path / "clip.ass"
+    build_ass_for_clip(segments, 10.0, 12.0, str(out_path))
+    text = out_path.read_text(encoding="utf-8")
+    assert r"\fad(120,80)" in text
+    assert "First segment one ." in text
+    assert _animate_caption("hi").endswith("hi")
+
+
+def test_render_clip_builds_vertical_clip_with_audio(tmp_path: Path):
+    ffmpeg = shutil.which("ffmpeg") or render_mod._ffmpeg_exe()
+    src = tmp_path / "src.mp4"
+    ass = tmp_path / "clip.ass"
+    out = tmp_path / "out.mp4"
+    ass.write_text(
+        """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
+Style: Default,Arial Black,72,&H00FFFFFF,&H00000000,&H00000000,1,4,0,2,60,60,120
+
+[Events]
+Format: Layer, Start, End, Style, Text
+Dialogue: 0,0:00:00.00,0:00:01.50,Default,{\\fad(120,80)}Test caption
+"""
+    )
+    subprocess.run(
+        [
+            ffmpeg, "-y",
+            "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=15",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+            "-t", "2",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            str(src),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    render_mod.render_clip(str(src), 0.0, 1.6, 0.5, str(ass), str(out))
+    assert out.exists() and out.stat().st_size > 0
+    cap = __import__("cv2").VideoCapture(str(out))
+    w = int(cap.get(__import__("cv2").CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(__import__("cv2").CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+    assert (w, h) == (1080, 1920)

@@ -37,6 +37,17 @@ def on_startup():
     init_db()
 
 
+@app.get("/")
+def root():
+    """Browser/health check for the API process (the UI lives on the frontend)."""
+    return {
+        "name": "Mananabas API",
+        "status": "ok",
+        "docs": "/docs",
+        "jobs": "/api/jobs",
+    }
+
+
 @app.post("/api/jobs", response_model=JobRead)
 def create_job(payload: JobCreateRequest, session: Session = Depends(get_session)):
     job = Job(youtube_url=str(payload.youtube_url))

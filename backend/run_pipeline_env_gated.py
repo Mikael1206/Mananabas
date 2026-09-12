@@ -289,36 +289,10 @@ def select_highlights(transcript_text: str) -> List[Dict]:
     return clean
 
 
-def _find_crop_center_x(video_path: Path, start: float, end: float, sample_count: int = 6) -> float:
-    import cv2
+def _find_crop_center_x(video_path: Path, start: float, end: float, sample_count: int = 12) -> float:
+    from app.pipeline.reframe import find_crop_center_x
 
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
-
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-
-    centers: List[float] = []
-    duration = max(end - start, 0.1)
-    for i in range(sample_count):
-        t = start + duration * (i / max(sample_count - 1, 1))
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
-        ok, frame = cap.read()
-        if not ok:
-            continue
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
-        if len(faces) > 0:
-            fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-            face_center_x = (fx + fw / 2) / frame.shape[1]
-            centers.append(face_center_x)
-
-    cap.release()
-    if not centers:
-        return 0.5
-    return sum(centers) / len(centers)
+    return find_crop_center_x(str(video_path), start, end, sample_count)
 
 
 _ASS_HEADER = """[Script Info]
@@ -389,51 +363,9 @@ def _render_clip(
     ass_path: Path,
     out_path: Path,
 ) -> Path:
-    import cv2
+    from app.pipeline.render import render_clip
 
-    cap = cv2.VideoCapture(str(source_path))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-
-    target_ratio = 9 / 16
-    crop_w = int(height * target_ratio)
-    if crop_w > width:
-        crop_w = width
-    crop_h = height
-
-    x_center_px = center_x_norm * width
-    x = int(x_center_px - crop_w / 2)
-    x = max(0, min(x, width - crop_w))
-
-    duration = max(end - start, 0.5)
-
-    vf = f"crop={crop_w}:{crop_h}:{x}:0,scale=1080:1920,ass={ass_path}"
-
-    cmd = [
-        _ffmpeg_exe(),
-        "-y",
-        "-ss",
-        str(start),
-        "-i",
-        str(source_path),
-        "-t",
-        str(duration),
-        "-vf",
-        vf,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "20",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        str(out_path),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    render_clip(str(source_path), start, end, center_x_norm, str(ass_path), str(out_path))
     return out_path
 
 

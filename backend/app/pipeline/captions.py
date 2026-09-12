@@ -23,6 +23,14 @@ Format: Layer, Start, End, Style, Text
 """
 
 
+def _animate_caption(text: str) -> str:
+    """Pop-in scale + fade so captions feel distinct from the source video."""
+    return (
+        r"{\fad(120,80)\t(0,180,\fscx112\fscy112)\t(180,360,\fscx100\fscy100)}"
+        + text
+    )
+
+
 def _fmt_time(t: float) -> str:
     if t < 0:
         t = 0
@@ -52,14 +60,14 @@ def build_ass_for_clip(segments: List[Segment], clip_start: float, clip_end: flo
                 text = " ".join(chunk).replace("\n", " ")
                 lines.append(
                     f"Dialogue: 0,{_fmt_time(chunk_start - clip_start)},"
-                    f"{_fmt_time(w.end - clip_start)},Default,{text}"
+                    f"{_fmt_time(w.end - clip_start)},Default,{_animate_caption(text)}"
                 )
                 chunk, chunk_start = [], None
         if chunk and chunk_start is not None:
             text = " ".join(chunk).replace("\n", " ")
             lines.append(
                 f"Dialogue: 0,{_fmt_time(chunk_start - clip_start)},"
-                f"{_fmt_time(min(seg.end, clip_end) - clip_start)},Default,{text}"
+                f"{_fmt_time(min(seg.end, clip_end) - clip_start)},Default,{_animate_caption(text)}"
             )
 
     with open(out_path, "w", encoding="utf-8") as f:
