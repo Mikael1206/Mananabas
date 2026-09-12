@@ -4,7 +4,7 @@ import sys
 import time
 import urllib.request
 
-BASE = "http://127.0.0.1:8001"
+BASE = "http://127.0.0.1:8000"
 URL = "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
 LOG = "/tmp/e2e_progress.txt"
 

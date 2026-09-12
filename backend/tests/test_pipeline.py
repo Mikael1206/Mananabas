@@ -1,5 +1,5 @@
 """
-Tests for the Pungol standalone pipeline module.
+Tests for the Mananabas standalone pipeline module.
 
 Run from the project root with the backend venv active:
 

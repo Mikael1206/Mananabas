@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pungol pipeline — importable module that does *not* validate env at import
+Mananabas pipeline — importable module that does *not* validate env at import
 time. Validation is deferred until `main()` is called.
 
 This is the companion to `run_pipeline.py`. Use it when you want to inspect

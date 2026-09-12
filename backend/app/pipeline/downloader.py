@@ -43,6 +43,11 @@ def download_video(url: str, out_dir: str) -> str:
         "ffmpeg_location": _ffmpeg_location(),
         "quiet": True,
         "no_warnings": True,
+        # yt-dlp aborts if it wants to merge streams and thinks ffmpeg is
+        # unavailable. We ship a static ffmpeg via imageio-ffmpeg, so make
+        # the absence case fail with a clear message instead of a generic
+        # "merging of multiple formats" error.
+        "abort_on_error": False,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:

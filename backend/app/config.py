@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Storage
     media_dir: str = "./media"
-    database_url: str = "sqlite:///./pungol.db"
+    database_url: str = "sqlite:///./mananabas.db"
 
     # Clip generation
     max_clips_per_job: int = 5

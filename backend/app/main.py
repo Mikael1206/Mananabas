@@ -5,6 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import init_db, get_session
@@ -12,7 +13,7 @@ from app.jobs import run_job
 from app.models import Job
 from app.schemas import JobCreateRequest, JobRead
 
-app = FastAPI(title="Pungol API")
+app = FastAPI(title="Mananabas API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,7 +50,8 @@ def create_job(payload: JobCreateRequest, session: Session = Depends(get_session
 
 @app.get("/api/jobs/{job_id}", response_model=JobRead)
 def get_job(job_id: int, session: Session = Depends(get_session)):
-    job = session.get(Job, job_id)
+    statement = select(Job).options(selectinload(Job.clips)).where(Job.id == job_id)
+    job = session.exec(statement).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -57,4 +59,5 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
 
 @app.get("/api/jobs", response_model=List[JobRead])
 def list_jobs(session: Session = Depends(get_session)):
-    return session.exec(select(Job).order_by(Job.id.desc())).all()
+    statement = select(Job).options(selectinload(Job.clips)).order_by(Job.id.desc())
+    return session.exec(statement).all()

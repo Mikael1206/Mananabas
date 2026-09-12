@@ -2,7 +2,9 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlmodel import SQLModel, Field
+from typing import List
+
+from sqlmodel import SQLModel, Field, Relationship
 
 
 class JobStatus(str, enum.Enum):
@@ -24,6 +26,8 @@ class Job(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     video_path: Optional[str] = None
 
+    clips: List["Clip"] = Relationship(back_populates="job")
+
 
 class Clip(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -34,3 +38,5 @@ class Clip(SQLModel, table=True):
     start: float
     end: float
     file_path: str
+
+    job: Job = Relationship(back_populates="clips")

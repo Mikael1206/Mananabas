@@ -94,5 +94,14 @@ def run_job(job_id: int) -> None:
         except Exception as e:  # noqa: BLE001 - MVP: surface any failure to the UI
             job.status = JobStatus.failed
             job.error = f"{e}\n{traceback.format_exc()}"
-            session.add(job)
-            session.commit()
+            try:
+                session.add(job)
+                session.commit()
+            except Exception as commit_error:
+                # If we can't even persist the failure, log it and re-raise
+                # so the thread/executor reports a problem.
+                print(
+                    f"Failed to persist job failure for job {job_id}: {commit_error}",
+                    file=__import__("sys").stderr,
+                )
+                raise commit_error from e

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pungol pipeline — single file, zero external dependencies beyond stdlib + the
+Mananabas pipeline — single file, zero external dependencies beyond stdlib + the
 packages already pinned in backend/requirements.txt.
 
 Run from backend/ with the venv active:
@@ -17,7 +17,7 @@ What it does, in order:
      - ffmpeg: crop to 9:16, trim, burn captions -> final .mp4.
   5. Print a short summary of the finished clips.
 
-Set environment variables (or use an .env / pungol.env) before running:
+Set environment variables (or use an .env / mananabas.env) before running:
 
     LLM_PROVIDER=openai
     OPENAI_API_KEY=sk-...
@@ -27,7 +27,7 @@ Set environment variables (or use an .env / pungol.env) before running:
     MAX_CLIPS_PER_JOB=5
     CLIP_MIN_SECONDS=20
     CLIP_MAX_SECONDS=90
-    DATABASE_URL=sqlite:///./pungol.db   # optional; used only if you want the
+    DATABASE_URL=sqlite:///./mananabas.db   # optional; used only if you want the
                                           # same SQLModel schema. Not required
                                           # for this standalone runner.
 """
@@ -164,6 +164,9 @@ def _download(url: str, out_dir: Path) -> Path:
         "ffmpeg_location": _ffmpeg_exe(),
         "quiet": True,
         "no_warnings": True,
+        # yt-dlp aborts if it wants to merge streams and thinks ffmpeg is
+        # unavailable. We ship a static ffmpeg via imageio-ffmpeg.
+        "abort_on_error": False,
     }
 
     import yt_dlp

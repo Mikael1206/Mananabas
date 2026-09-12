@@ -34,21 +34,51 @@ export default function Home() {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-  };
-
-  const pollJob = (jobId: number) => {
+  };  const pollJob = (jobId: number) => {
     stopPolling();
+    let consecutiveFailures = 0;
+    const maxConsecutiveFailures = 3;
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${API_URL}/api/jobs/${jobId}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= maxConsecutiveFailures) {
+            stopPolling();
+            setJob((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    error:
+                      "Unable to load job status. The backend may be unreachable.",
+                  }
+                : undefined,
+            );
+            return;
+          }
+          return;
+        }
+        consecutiveFailures = 0;
         const data: Job = await res.json();
         setJob(data);
         if (data.status === "done" || data.status === "failed") {
           stopPolling();
         }
       } catch (err) {
-        console.error("Polling error:", err);
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= maxConsecutiveFailures) {
+          stopPolling();
+          setJob((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  error:
+                    "Unable to load job status. The backend may be unreachable.",
+              }
+              : undefined,
+          );
+          return;
+        }
       }
     }, 2500);
   };
@@ -64,21 +94,48 @@ export default function Home() {
         body: JSON.stringify({ youtube_url: url }),
       });
       if (!res.ok) {
-        throw new Error(`Failed to create job: ${res.statusText}`);
+        let detail = res.statusText;
+        try {
+          const body = await res.json();
+          if (typeof body === "object" && body && "detail" in body) {
+            detail = String((body as { detail: unknown }).detail);
+          }
+        } catch {
+          // response body wasn't JSON; keep statusText
+        }
+        throw new Error(`Failed to create job: ${res.status} ${detail}`);
       }
       const data: Job = await res.json();
       setJob(data);
       pollJob(data.id);
     } catch (error) {
       console.error(error);
+      const message =
+        error instanceof Error
+          ? networkErrorMsg(error.message)
+          : String(error);
+      // Don't fabricate a Job object on submit failure. Showing the error
+      // banner directly is clearer than inventing "Job #0".
       setJob({
         id: 0,
         youtube_url: url,
         status: "failed",
         progress_message: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
         clips: [],
       });
+      // If the backend is unreachable, don't start a poll that will just
+      // produce the same unreachable error again.
+      if (
+        message === "Could not reach the backend. Is the API running at " +
+          API_URL + "?"
+      ) {
+        return;
+      }
+      // For server-side create-job rejections (non-2xx), still poll once so
+      // we can surface any real job error the API returned.
+      const fallbackId = 0;
+      pollJob(fallbackId);
     } finally {
       setSubmitting(false);
     }
@@ -86,12 +143,44 @@ export default function Home() {
 
   useEffect(() => stopPolling, []);
 
+  const networkErrorMsg = (message: string) => {
+    // Browsers often report fetch failures as the generic "Failed to fetch".
+    // Give the user something more actionable.
+    if (message === "Failed to fetch") {
+      return (
+        "Could not reach the backend. Is the API running at " +
+        API_URL + "?"
+      );
+    }
+    if (
+      message.startsWith("fetch") ||
+      message.includes("NetworkError") ||
+      message.includes("network") ||
+      message.includes("Network")
+    ) {
+      return (
+        "Network error reaching the backend. Is the API running at " +
+        API_URL + "?"
+      );
+    }
+    return message;
+  };
+
   return (
     <main className="min-h-screen flex flex-col items-center px-6 py-16">
-      <h1 className="text-3xl font-bold mb-2">Pungol</h1>
+      <h1 className="text-3xl font-bold mb-2">Mananabas</h1>
       <p className="text-neutral-400 mb-8">
         Paste a YouTube URL, get back ranked vertical clips with captions.
       </p>
+
+      {job && job.status === "failed" && job.error && (
+        <div className="w-full max-w-xl mb-6 rounded-md border border-red-800 bg-red-950/30 p-4">
+          <p className="text-sm font-medium text-red-300">Job failed</p>
+          <pre className="mt-1 text-xs text-red-200 whitespace-pre-wrap">
+            {job.error}
+          </pre>
+        </div>
+      )}
 
       <div className="w-full max-w-xl flex gap-2">
         <input
