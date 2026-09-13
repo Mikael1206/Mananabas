@@ -29,6 +29,10 @@ export default function Home() {
   const [language, setLanguage] = useState("");
   const [job, setJob] = useState<Job | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [copyState, setCopyState] = useState<{
+    id: number;
+    state: "ok" | "error";
+  } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -52,9 +56,8 @@ export default function Home() {
                 ? {
                     ...prev,
                     error:
-                      "Unable to load job status. The backend may be unreachable.",
-                  }
-                : undefined,
+                      "Unable to load job status. The backend may be unreachable.",                    }
+                : null,
             );
             return;
           }
@@ -75,10 +78,9 @@ export default function Home() {
               ? {
                   ...prev,
                   error:
-                    "Unable to load job status. The backend may be unreachable.",
-              }
-              : undefined,
-          );
+                    "Unable to load job status. The backend may be unreachable.",              }
+              : null,
+            );
           return;
         }
       }
@@ -146,6 +148,50 @@ export default function Home() {
 
   useEffect(() => stopPolling, []);
 
+  const clipPostCaption = (clip: Clip) => {
+    const title = (clip.title || "").trim();
+    const hook = (clip.hook || "").trim();
+    if (title && hook && hook.toLowerCase() !== title.toLowerCase()) {
+      return `${title}\n\n${hook}`;
+    }
+    return title || hook;
+  };
+
+  const writeClipboard = async (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  };
+
+  // Copy the clip's title/hook (the post caption), not the burned-in subtitles.
+  const copyCaptions = async (clip: Clip) => {
+    try {
+      const text = clipPostCaption(clip);
+      if (!text) {
+        throw new Error("This clip has no title or hook to copy.");
+      }
+      await writeClipboard(text);
+      setCopyState({ id: clip.id, state: "ok" });
+    } catch (err) {
+      console.error(err);
+      setCopyState({ id: clip.id, state: "error" });
+    } finally {
+      setTimeout(
+        () => setCopyState((s) => (s?.id === clip.id ? null : s)),
+        2000
+      );
+    }
+  };
+
   const networkErrorMsg = (message: string) => {
     // Browsers often report fetch failures as the generic "Failed to fetch".
     // Give the user something more actionable.
@@ -175,15 +221,6 @@ export default function Home() {
       <p className="text-neutral-400 mb-8">
         Paste a YouTube URL, get back ranked vertical clips with captions.
       </p>
-
-      {job && job.status === "failed" && job.error && (
-        <div className="w-full max-w-xl mb-6 rounded-md border border-red-800 bg-red-950/30 p-4">
-          <p className="text-sm font-medium text-red-300">Job failed</p>
-          <pre className="mt-1 text-xs text-red-200 whitespace-pre-wrap">
-            {job.error}
-          </pre>
-        </div>
-      )}
 
       <div className="w-full max-w-xl flex gap-2">
         <input
@@ -238,6 +275,30 @@ export default function Home() {
                 {clip.score !== null && (
                   <p className="text-xs text-neutral-400">Score: {clip.score}</p>
                 )}
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => copyCaptions(clip)}
+                    className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-400"
+                  >
+                    {copyState?.id === clip.id
+                      ? copyState.state === "ok"
+                        ? "Copied!"
+                        : "Copy failed"
+                      : "Copy captions"}
+                  </button>
+                  <a
+                    href={`${API_URL}/api/clips/${clip.id}/captions?format=srt`}
+                    className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-400"
+                  >
+                    .srt
+                  </a>
+                  <a
+                    href={`${API_URL}/api/clips/${clip.id}/captions?format=ass`}
+                    className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-400"
+                  >
+                    .ass
+                  </a>
+                </div>
               </div>
             </div>
           ))}

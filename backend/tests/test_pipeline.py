@@ -390,6 +390,97 @@ Dialogue: 0,0:00:00.00,0:00:01.50,Default,{\\fad(120,80)}Test caption
     assert (w, h) == (1080, 1920)
 
 
+# ---------------------------------------------------------------------------
+# Caption export: parse ASS events, convert to SRT / plain text
+# ---------------------------------------------------------------------------
+def test_parse_ass_events_strips_override_tags(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import parse_ass_events
+
+    # Raw string: \f / \t must stay literal backslash sequences like in a real
+    # .ass file (a real form-feed char would be split on by str.splitlines()).
+    ass = r"""[Script Info]
+ScriptType: v4.00+
+
+[Events]
+Format: Layer, Start, End, Style, Text
+Dialogue: 0,0:00:00.00,0:00:02.00,Default,{\fad(120,80)\t(0,180,\fscx112\fscy112)\t(180,360,\fscx100\fscy100)}First segment one .
+Dialogue: 0,0:00:02.20,0:00:03.50,Default,{\fad(120,80)}tail words
+"""
+    cues = parse_ass_events(ass)
+    assert cues == [
+        (0.0, 2.0, "First segment one ."),
+        (2.2, 3.5, "tail words"),
+    ]
+
+
+def test_parse_ass_events_handles_standard_10_field_header(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import parse_ass_events
+
+    ass = """[Events]
+Format: Marked, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: M 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,Hello there
+"""
+    cues = parse_ass_events(ass)
+    assert cues == [(1.0, 2.5, "Hello there")]
+
+
+def test_captions_to_srt_output(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import captions_to_srt
+
+    srt = captions_to_srt([(0.0, 2.0, "First segment one ."), (2.2, 3.5, "tail words")])
+    assert (
+        srt == "1\n00:00:00,000 --> 00:00:02,000\nFirst segment one .\n\n"
+        "2\n00:00:02,200 --> 00:00:03,500\ntail words\n"
+    )
+
+
+def test_captions_to_srt_handles_rounding_carry_and_clamps_negative(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import captions_to_srt
+
+    # 59.9999s rounds up to 60000ms -> carries into the next minute/second.
+    srt = captions_to_srt([(59.9999, 61.0, "carry test")])
+    assert srt == "1\n00:01:00,000 --> 00:01:01,000\ncarry test\n"
+
+    # Negative times (defensive) clamp to zero.
+    srt2 = captions_to_srt([(-0.5, 1.0, "neg")])
+    assert srt2 == "1\n00:00:00,000 --> 00:00:01,000\nneg\n"
+
+
+def test_captions_to_plain_text_joins_cue_text_only(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import captions_to_plain_text
+
+    text = captions_to_plain_text([(0.0, 2.0, "a"), (2.2, 3.5, "b")])
+    assert text == "a\nb"
+    assert captions_to_plain_text([]) == ""
+
+
+def test_export_captions_supports_txt_srt_ass(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
+    from app.pipeline.captions import export_captions
+
+    ass_path = tmp_path / "clip_0.ass"
+    ass_path.write_text(
+        """[Script Info]
+ScriptType: v4.00+
+
+[Events]
+Format: Layer, Start, End, Style, Text
+Dialogue: 0,0:00:00.00,0:00:02.00,Default,{\\fad(120,80)}First segment one .
+""",
+        encoding="utf-8",
+    )
+    assert export_captions(str(ass_path), fmt="txt") == "First segment one ."
+    assert export_captions(str(ass_path), fmt="srt").startswith("1\n00:00:00,000")
+    assert "[Script Info]" in export_captions(str(ass_path), fmt="ass")
+    with pytest.raises(ValueError):
+        export_captions(str(ass_path), fmt="vtt")
+
+
 def test_transcribe_forwards_language_to_model(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-import")
     from app.pipeline import transcriber as transcriber_mod
@@ -427,3 +518,33 @@ def test_transcribe_forwards_language_to_model(monkeypatch):
     assert fake.calls
     assert fake.calls[0]["language"] == "tl"
     assert fake.calls[0]["word_timestamps"] is True
+
+
+def test_download_error_is_treated_as_transient():
+    from app.pipeline.downloader import _is_transient
+
+    assert _is_transient(
+        RuntimeError(
+            "Failed to resolve 'rr5---sn-ajhoaq-5i.googlevideo.com' "
+            "([Errno -2] Name or service not known)"
+        )
+    )
+    assert not _is_transient(RuntimeError("Private video"))
+
+
+def test_download_retries_then_succeeds(monkeypatch):
+    from app.pipeline import downloader as dl
+    from yt_dlp.utils import DownloadError
+
+    calls = {"n": 0}
+
+    def _fail_twice(url, out_path):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise DownloadError("Failed to resolve host ([Errno -2] Name or service not known)")
+        return "/tmp/source.mp4"
+
+    monkeypatch.setattr(dl, "_download_once", _fail_twice)
+    monkeypatch.setattr(dl.time, "sleep", lambda _s: None)
+    assert dl.download_video("https://youtu.be/x", "/tmp/out") == "/tmp/source.mp4"
+    assert calls["n"] == 3

@@ -109,28 +109,9 @@ def _ffmpeg_exe() -> str:
 
 
 def _download(url: str, out_dir: Path) -> Path:
-    out_path = out_dir / "source.%(ext)s"
+    from app.pipeline.downloader import download_video
 
-    ydl_opts: Dict[str, Any] = {
-        "format": (
-            "bestvideo[height<=1080][ext=mp4][vcodec^=avc1]"
-            "+bestaudio[ext=m4a]/best[ext=mp4]/best"
-        ),
-        "outtmpl": str(out_path),
-        "merge_output_format": "mp4",
-        "ffmpeg_location": _ffmpeg_exe(),
-        "quiet": True,
-        "no_warnings": True,
-    }
-
-    import yt_dlp
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        base, _ = os.path.splitext(filename)
-        mp4_path = Path(base + ".mp4")
-        return mp4_path if mp4_path.exists() else Path(filename)
+    return Path(download_video(url, str(out_dir)))
 
 
 @dataclass

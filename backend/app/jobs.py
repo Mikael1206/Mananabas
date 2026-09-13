@@ -1,4 +1,5 @@
 import os
+import re
 import traceback
 
 from sqlmodel import Session
@@ -7,6 +8,22 @@ from app.config import settings
 from app.database import engine
 from app.models import Job, JobStatus, Clip
 from app.pipeline import downloader, transcriber, highlighter, reframe, captions, render
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _public_error(exc: BaseException) -> str:
+    """One clean line for the UI; full traceback stays in the server log."""
+    text = _ANSI_RE.sub("", str(exc)).replace("\r", "\n")
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("ERROR:"):
+            return line[:500]
+        if line.startswith("ERROR:"):
+            cleaned = line[len("ERROR:") :].strip()
+            if cleaned:
+                return cleaned[:500]
+    return type(exc).__name__
 
 
 def run_job(job_id: int) -> None:
@@ -93,7 +110,11 @@ def run_job(job_id: int) -> None:
 
         except Exception as e:  # noqa: BLE001 - MVP: surface any failure to the UI
             job.status = JobStatus.failed
-            job.error = f"{e}\n{traceback.format_exc()}"
+            job.error = _public_error(e)
+            print(
+                f"Job {job_id} failed: {e}\n{traceback.format_exc()}",
+                file=__import__("sys").stderr,
+            )
             try:
                 session.add(job)
                 session.commit()

@@ -122,6 +122,7 @@ Interactive docs are at `/docs` once the backend is running.
 | POST | `/api/jobs` | Submit a YouTube URL; starts a background job |
 | GET | `/api/jobs` | List all jobs, newest first |
 | GET | `/api/jobs/{job_id}` | Get a job's status and its clips |
+| GET | `/api/clips/{clip_id}/captions?format=txt\|srt\|ass` | A clip's generated captions as text (default `txt`); served as a file download |
 | GET | `/media/{job_id}/{file}` | Serve a rendered clip file |
 
 A job moves through `queued -> downloading -> transcribing -> ranking ->

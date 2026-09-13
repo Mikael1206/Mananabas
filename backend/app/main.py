@@ -1,8 +1,10 @@
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
@@ -10,7 +12,8 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import init_db, get_session
 from app.jobs import run_job
-from app.models import Job
+from app.models import Clip, Job
+from app.pipeline import captions as captions_pipeline
 from app.schemas import JobCreateRequest, JobRead
 
 app = FastAPI(title="Mananabas API")
@@ -57,6 +60,45 @@ def create_job(payload: JobCreateRequest, session: Session = Depends(get_session
 
     _executor.submit(run_job, job.id)
     return job
+
+
+@app.get("/api/clips/{clip_id}/captions", response_class=PlainTextResponse)
+def get_clip_captions(
+    clip_id: int,
+    format: str = Query("txt", pattern="^(txt|srt|ass)$"),
+    session: Session = Depends(get_session),
+):
+    """Return a clip's generated captions as text: plain lines ('txt'),
+    standard subtitles ('srt'), or the raw Advanced SubStation file ('ass').
+    The frontend fetches this to power its copy/download buttons."""
+    clip = session.get(Clip, clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    # jobs.py writes clip_{idx}.ass next to clip_{idx}.mp4 in creation order,
+    # so the caption file index is this clip's position among its job's clips.
+    sibling_ids = session.exec(
+        select(Clip.id).where(Clip.job_id == clip.job_id).order_by(Clip.id)
+    ).all()
+    if clip.id not in sibling_ids:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    idx = sibling_ids.index(clip.id)
+
+    ass_path = os.path.join(settings.media_dir, str(clip.job_id), f"clip_{idx}.ass")
+    if not os.path.exists(ass_path):
+        raise HTTPException(status_code=404, detail="Captions not found for this clip")
+
+    try:
+        content = captions_pipeline.export_captions(ass_path, fmt=format)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unsupported caption format")
+
+    return PlainTextResponse(
+        content,
+        headers={
+            "Content-Disposition": f'attachment; filename="clip_{idx}.{format}"'
+        },
+    )
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobRead)
