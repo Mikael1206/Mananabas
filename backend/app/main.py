@@ -18,6 +18,10 @@ app = FastAPI(title="Mananabas API")
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=[
+        "https://mananabas.vercel.app",
+        "https://www.mananabas.vercel.app",
+    ],
     allow_origin_regex=(
         r"https://.*\.vercel\.app"
         r"|http://localhost:\d+"

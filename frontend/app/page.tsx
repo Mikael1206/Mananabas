@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+).replace(/\/$/, "");
 
 type Clip = {
   id: number;
@@ -129,18 +131,8 @@ export default function Home() {
         error: message,
         clips: [],
       });
-      // If the backend is unreachable, don't start a poll that will just
-      // produce the same unreachable error again.
-      if (
-        message === "Could not reach the backend. Is the API running at " +
-          API_URL + "?"
-      ) {
-        return;
-      }
-      // For server-side create-job rejections (non-2xx), still poll once so
-      // we can surface any real job error the API returned.
-      const fallbackId = 0;
-      pollJob(fallbackId);
+      // Never poll job 0 — that id is only a UI placeholder and overwrites
+      // the real create-job error with "backend may be unreachable."
     } finally {
       setSubmitting(false);
     }
@@ -250,7 +242,9 @@ export default function Home() {
 
       {job && (
         <div className="w-full max-w-xl mt-8 rounded-md border border-neutral-800 p-4">
-          <p className="text-sm text-neutral-400">Job #{job.id}</p>
+          <p className="text-sm text-neutral-400">
+            {job.id > 0 ? `Job #${job.id}` : "Job not created"}
+          </p>
           <p className="mt-1 font-medium capitalize">{job.status}</p>
           {job.progress_message && (
             <p className="text-sm text-neutral-400 mt-1">{job.progress_message}</p>
