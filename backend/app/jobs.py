@@ -7,7 +7,6 @@ from sqlmodel import Session
 from app.config import settings
 from app.database import engine
 from app.models import Job, JobStatus, Clip
-from app.pipeline import downloader, transcriber, highlighter, reframe, captions, render
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -45,6 +44,10 @@ def run_job(job_id: int) -> None:
 
         try:
             settings.require_llm()
+            # Import pipeline only when a job runs so `uvicorn app.main:app`
+            # does not load OpenCV / yt-dlp / Whisper at boot (Railway OOM /
+            # missing .so crashes).
+            from app.pipeline import captions, downloader, highlighter, reframe, render, transcriber
 
             # 1. Download
             job.status = JobStatus.downloading

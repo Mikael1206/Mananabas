@@ -11,9 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import init_db, get_session
-from app.jobs import run_job
 from app.models import Clip, Job
-from app.pipeline import captions as captions_pipeline
 from app.schemas import JobCreateRequest, JobRead
 
 app = FastAPI(title="Mananabas API")
@@ -29,11 +27,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _media_root() -> str:
+    path = settings.media_dir
+    try:
+        os.makedirs(path, exist_ok=True)
+        return path
+    except OSError:
+        path = "/tmp/mananabas-media"
+        os.makedirs(path, exist_ok=True)
+        settings.media_dir = path
+        return path
+
+
 # Create the media folder before mounting: Starlette StaticFiles checks the
-# directory at startup, which crashes the replica if ./media is missing
-# (Railway images do not ship that folder).
-os.makedirs(settings.media_dir, exist_ok=True)
-app.mount("/media", StaticFiles(directory=settings.media_dir), name="media")
+# directory at startup, which crashes the replica if ./media is missing.
+app.mount("/media", StaticFiles(directory=_media_root()), name="media")
 
 # MVP-simple background execution. Swap for Celery + Redis when you need
 # multiple workers or want jobs to survive an API restart.
@@ -69,6 +77,8 @@ def create_job(payload: JobCreateRequest, session: Session = Depends(get_session
     session.commit()
     session.refresh(job)
 
+    from app.jobs import run_job
+
     _executor.submit(run_job, job.id)
     return job
 
@@ -100,6 +110,8 @@ def get_clip_captions(
         raise HTTPException(status_code=404, detail="Captions not found for this clip")
 
     try:
+        from app.pipeline import captions as captions_pipeline
+
         content = captions_pipeline.export_captions(ass_path, fmt=format)
     except ValueError:
         raise HTTPException(status_code=400, detail="Unsupported caption format")

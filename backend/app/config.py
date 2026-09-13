@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,16 @@ class Settings(BaseSettings):
     max_clips_per_job: int = 5
     clip_min_seconds: int = 20
     clip_max_seconds: int = 90
+
+    @field_validator(
+        "max_clips_per_job", "clip_min_seconds", "clip_max_seconds", mode="before"
+    )
+    @classmethod
+    def _empty_int_uses_default(cls, value, info):
+        """Railway Variables left blank become '' and crash Settings() at import."""
+        if value == "" or value is None:
+            return cls.model_fields[info.field_name].default
+        return value
 
     def llm_key_error(self) -> str | None:
         """Return a user-facing error if LLM config is unusable, else None.
@@ -59,4 +70,10 @@ class Settings(BaseSettings):
             raise ValueError(err)
 
 
-settings = Settings()
+try:
+    settings = Settings()
+except Exception as exc:  # noqa: BLE001 - boot must survive bad Railway env
+    import sys
+
+    print(f"Settings() failed ({exc!r}); using defaults.", file=sys.stderr)
+    settings = Settings.model_validate({})

@@ -17,6 +17,7 @@
     "libswresample-dev"
   ],
   "deploy": {
-    "aptPackages": ["...", "ffmpeg"]
+    "aptPackages": ["...", "ffmpeg", "libglib2.0-0", "libgomp1"],
+    "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
   }
 }
