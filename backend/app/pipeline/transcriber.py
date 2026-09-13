@@ -2,8 +2,13 @@
 Transcribes a video's audio track locally using faster-whisper.
 No API cost, runs on CPU (slower) or CUDA GPU (fast) depending on config.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
 
 from app.config import settings
 
