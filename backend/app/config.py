@@ -1,4 +1,3 @@
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,10 +28,12 @@ class Settings(BaseSettings):
     clip_min_seconds: int = 20
     clip_max_seconds: int = 90
 
-    @model_validator(mode="after")
-    def _validate_llm_config(self) -> "Settings":
-        """Fail fast with a clear message instead of a cryptic connection
-        error when the configured provider's API key is missing/empty."""
+    def llm_key_error(self) -> str | None:
+        """Return a user-facing error if LLM config is unusable, else None.
+
+        Startup must not raise: Railway restarts the replica if importing
+        settings crashes, which shows up as a successful build then CRASHED.
+        """
         provider = self.llm_provider.lower()
         providers = {
             "openai": ("OPENAI_API_KEY", self.openai_api_key),
@@ -40,18 +41,22 @@ class Settings(BaseSettings):
             "gemini": ("GEMINI_API_KEY", self.gemini_api_key),
         }
         if provider not in providers:
-            raise ValueError(
+            return (
                 f"Unknown LLM_PROVIDER '{self.llm_provider}'. "
                 f"Expected one of: {', '.join(providers)}."
             )
         env_var, key = providers[provider]
         if not key:
-            raise ValueError(
-                f"{env_var} is not set. Add your API key to .env "
-                f"(see .env.example), or switch LLM_PROVIDER to one of: "
-                f"{', '.join(providers)}."
+            return (
+                f"{env_var} is not set. Add it in Railway Variables "
+                f"(or .env locally)."
             )
-        return self
+        return None
+
+    def require_llm(self) -> None:
+        err = self.llm_key_error()
+        if err:
+            raise ValueError(err)
 
 
 settings = Settings()

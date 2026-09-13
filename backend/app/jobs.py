@@ -44,6 +44,8 @@ def run_job(job_id: int) -> None:
         os.makedirs(job_dir, exist_ok=True)
 
         try:
+            settings.require_llm()
+
             # 1. Download
             job.status = JobStatus.downloading
             job.progress_message = "Downloading source video..."

@@ -29,7 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve rendered clips directly, e.g. GET /media/3/clip_0.mp4
+# Create the media folder before mounting: Starlette StaticFiles checks the
+# directory at startup, which crashes the replica if ./media is missing
+# (Railway images do not ship that folder).
+os.makedirs(settings.media_dir, exist_ok=True)
 app.mount("/media", StaticFiles(directory=settings.media_dir), name="media")
 
 # MVP-simple background execution. Swap for Celery + Redis when you need
@@ -57,6 +60,10 @@ def root():
 
 @app.post("/api/jobs", response_model=JobRead)
 def create_job(payload: JobCreateRequest, session: Session = Depends(get_session)):
+    llm_err = settings.llm_key_error()
+    if llm_err:
+        raise HTTPException(status_code=503, detail=llm_err)
+
     job = Job(youtube_url=str(payload.youtube_url), language=payload.language)
     session.add(job)
     session.commit()

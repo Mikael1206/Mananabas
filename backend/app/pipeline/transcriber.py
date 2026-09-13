@@ -5,16 +5,17 @@ No API cost, runs on CPU (slower) or CUDA GPU (fast) depending on config.
 from dataclasses import dataclass
 from typing import List, Optional
 
-from faster_whisper import WhisperModel
-
 from app.config import settings
 
 _model = None
 
 
-def _get_model() -> WhisperModel:
+def _get_model():
+    """Load Whisper on first transcription, not at API import (saves RAM)."""
     global _model
     if _model is None:
+        from faster_whisper import WhisperModel
+
         _model = WhisperModel(
             settings.whisper_model_size,
             device=settings.whisper_device,
