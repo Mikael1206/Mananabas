@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "packages": {
+    "python": "3.12"
+  },
+  "buildAptPackages": [
+    "...",
+    "pkg-config",
+    "ffmpeg",
+    "libavformat-dev",
+    "libavcodec-dev",
+    "libavdevice-dev",
+    "libavutil-dev",
+    "libavfilter-dev",
+    "libswscale-dev",
+    "libswresample-dev"
+  ],
+  "deploy": {
+    "aptPackages": ["...", "ffmpeg"]
+  }
+}
