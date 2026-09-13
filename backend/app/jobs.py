@@ -14,6 +14,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 def _public_error(exc: BaseException) -> str:
     """One clean line for the UI; full traceback stays in the server log."""
     text = _ANSI_RE.sub("", str(exc)).replace("\r", "\n")
+    if "exit -9" in text or "(-9)" in text or "137" in text[:80]:
+        return (
+            "ffmpeg ran out of memory on the server (killed with signal 9). "
+            "Redeploy after the lite-render fix, or raise Railway RAM."
+        )
     for line in text.splitlines():
         line = line.strip()
         if line and not line.startswith("ERROR:"):

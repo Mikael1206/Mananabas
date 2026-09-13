@@ -3,11 +3,13 @@ Renders a final vertical clip: crops the source to 9:16 on the detected
 subject, applies short-form grade/animation, burns captions, and mixes
 opening/ending stings plus a generated royalty-free music bed under speech.
 
-Requires ffmpeg. Uses a system ffmpeg if one is on PATH, otherwise falls
-back to the static binary bundled with `imageio-ffmpeg`.
+On Railway (or RENDER_LITE=1) a lighter graph is used: zoompan and extra
+lavfi inputs are skipped so ffmpeg is not SIGKILL'd (exit -9) by the OOM
+killer.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from typing import List, Tuple
@@ -16,6 +18,16 @@ import cv2
 
 OUTPUT_W = 1080
 OUTPUT_H = 1920
+LITE_W = 720
+LITE_H = 1280
+
+
+def _constrained() -> bool:
+    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER_LITE"))
+
+
+def _out_size(lite: bool) -> Tuple[int, int]:
+    return (LITE_W, LITE_H) if lite else (OUTPUT_W, OUTPUT_H)
 
 
 def _ffmpeg_exe() -> str:
@@ -91,47 +103,58 @@ def build_video_filter(
     duration: float,
     ass_path: str,
     fps: float = 30.0,
+    lite: bool = False,
 ) -> str:
     """
-    Crop → scale → slow Ken Burns zoom → grade → vignette → fades → captions.
+    Crop → scale → (optional Ken Burns) → grade → fades → captions.
 
-    zoompan d=1 keeps 1:1 frame mapping so clip duration is unchanged.
+    zoompan is omitted in lite mode; it buffers full frames and often gets
+    the process SIGKILL'd on small Railway instances.
     """
     fade_in, fade_out, fade_out_st = fade_times(duration)
-    fps = max(fps, 12.0)
     ass = escape_filter_path(ass_path)
-    zoom = (
-        f"zoompan=z='min(1.16,1.04+0.00055*on)'"
-        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d=1:s={OUTPUT_W}x{OUTPUT_H}:fps={fps:.4f}"
-    )
-    return ",".join(
+    out_w, out_h = _out_size(lite)
+    parts = [
+        f"crop={crop_w}:{crop_h}:{x}:0",
+        f"scale={out_w}:{out_h}",
+    ]
+    if not lite:
+        fps = max(fps, 12.0)
+        parts.append(
+            f"zoompan=z='min(1.16,1.04+0.00055*on)'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={out_w}x{out_h}:fps={fps:.4f}"
+        )
+        parts.extend(
+            [
+                "eq=contrast=1.08:brightness=0.02:saturation=1.18:gamma=1.04",
+                "unsharp=5:5:0.65:5:5:0.0",
+                "vignette=PI/5",
+            ]
+        )
+    else:
+        parts.append("eq=contrast=1.06:saturation=1.12")
+    parts.extend(
         [
-            f"crop={crop_w}:{crop_h}:{x}:0",
-            f"scale={OUTPUT_W}:{OUTPUT_H}",
-            zoom,
-            "eq=contrast=1.08:brightness=0.02:saturation=1.18:gamma=1.04",
-            "unsharp=5:5:0.65:5:5:0.0",
-            "vignette=PI/5",
             f"fade=t=in:st=0:d={fade_in:.3f}",
             f"fade=t=out:st={fade_out_st:.3f}:d={fade_out:.3f}",
             f"ass={ass}",
         ]
     )
+    return ",".join(parts)
 
 
-def build_audio_filter(duration: float, has_speech: bool = True) -> str:
+def build_audio_filter(
+    duration: float, has_speech: bool = True, lite: bool = False
+) -> str:
     """
     Mix original speech with a generated pad/texture bed, an opening whoosh,
     and an ending sting.
 
-    lavfi inputs after the source video are expected in this order:
-      [1] pad A  [2] pad B  [3] pad C  [4] pink-noise texture
-      [5] opening whoosh  [6] ending sting
+    Full lavfi order: [1][2][3] pads [4] noise [5] whoosh [6] sting.
+    Lite lavfi order: [1] single pad only.
     """
     fade_in, fade_out, fade_out_st = fade_times(duration)
-    end_ms = max(int((duration - 0.48) * 1000), 0)
-    bgm_fade_out_st = max(duration - 1.3, 0.0)
     if has_speech:
         speech = (
             "[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
@@ -143,6 +166,17 @@ def build_audio_filter(duration: float, has_speech: bool = True) -> str:
             f"anullsrc=r=44100:cl=stereo,atrim=0:{duration:.3f},"
             "aformat=sample_fmts=fltp:channel_layouts=stereo[speech]"
         )
+    if lite:
+        return ";".join(
+            [
+                speech,
+                "[1:a]aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.12,"
+                f"afade=t=in:st=0:d=1.0,afade=t=out:st={max(duration-1.0, 0):.3f}:d=1.0[bgm]",
+                "[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0:weights=1 0.22[aout]",
+            ]
+        )
+    end_ms = max(int((duration - 0.48) * 1000), 0)
+    bgm_fade_out_st = max(duration - 1.3, 0.0)
     return ";".join(
         [
             speech,
@@ -165,9 +199,11 @@ def build_audio_filter(duration: float, has_speech: bool = True) -> str:
     )
 
 
-def lavfi_audio_inputs(duration: float) -> List[str]:
+def lavfi_audio_inputs(duration: float, lite: bool = False) -> List[str]:
     """Royalty-free generated bed + stings; no third-party audio files needed."""
     d = f"{max(duration, 0.5):.3f}"
+    if lite:
+        return ["-f", "lavfi", "-t", d, "-i", "sine=frequency=220:sample_rate=22050"]
     return [
         "-f", "lavfi", "-t", d, "-i", "sine=frequency=220:sample_rate=44100",
         "-f", "lavfi", "-t", d, "-i", "sine=frequency=277.18:sample_rate=44100",
@@ -187,12 +223,60 @@ def lavfi_audio_inputs(duration: float) -> List[str]:
     ]
 
 
+def _ffmpeg_error_message(exc: subprocess.CalledProcessError) -> str:
+    if exc.returncode in (-9, 137):
+        return (
+            "ffmpeg was killed (exit -9/137): the host ran out of memory. "
+            "Railway trial RAM is often too small for 1080p zoompan; "
+            "the next retry uses a lighter encode, or set RENDER_LITE=1."
+        )
+    tail = (exc.stderr or exc.stdout or "")[-4000:]
+    return f"ffmpeg failed ({exc.returncode}): {tail}"
+
+
 def _run_ffmpeg(cmd: List[str]) -> None:
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
-        tail = (exc.stderr or exc.stdout or "")[-4000:]
-        raise RuntimeError(f"ffmpeg failed ({exc.returncode}): {tail}") from exc
+        raise RuntimeError(_ffmpeg_error_message(exc)) from exc
+
+
+def _encode(
+    source_path: str,
+    start: float,
+    duration: float,
+    crop_w: int,
+    crop_h: int,
+    x: int,
+    ass_path: str,
+    out_path: str,
+    fps: float,
+    lite: bool,
+) -> None:
+    vf = build_video_filter(crop_w, crop_h, x, duration, ass_path, fps=fps, lite=lite)
+    af = build_audio_filter(duration, has_speech=has_audio_stream(source_path), lite=lite)
+    cmd = [
+        _ffmpeg_exe(),
+        "-y",
+        "-threads", "1",
+        "-filter_threads", "1",
+        "-ss", str(start),
+        "-t", str(duration),
+        "-i", source_path,
+        *lavfi_audio_inputs(duration, lite=lite),
+        "-filter_complex", f"[0:v]{vf}[vout];{af}",
+        "-map", "[vout]",
+        "-map", "[aout]",
+        "-c:v", "libx264",
+        "-preset", "ultrafast" if lite else "veryfast",
+        "-crf", "23" if lite else "20",
+        "-c:a", "aac",
+        "-b:a", "128k" if lite else "160k",
+        "-shortest",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    _run_ffmpeg(cmd)
 
 
 def render_clip(
@@ -206,27 +290,15 @@ def render_clip(
     width, height, fps = _get_video_info(source_path)
     crop_w, crop_h, x = crop_window(width, height, center_x_norm)
     duration = max(end - start, 0.5)
-    vf = build_video_filter(crop_w, crop_h, x, duration, ass_path, fps=fps)
-    af = build_audio_filter(duration, has_speech=has_audio_stream(source_path))
-
-    cmd = [
-        _ffmpeg_exe(),
-        "-y",
-        "-ss", str(start),
-        "-t", str(duration),
-        "-i", source_path,
-        *lavfi_audio_inputs(duration),
-        "-filter_complex", f"[0:v]{vf}[vout];{af}",
-        "-map", "[vout]",
-        "-map", "[aout]",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "20",
-        "-c:a", "aac",
-        "-b:a", "160k",
-        "-shortest",
-        "-movflags", "+faststart",
-        out_path,
-    ]
-    _run_ffmpeg(cmd)
+    lite = _constrained()
+    try:
+        _encode(
+            source_path, start, duration, crop_w, crop_h, x, ass_path, out_path, fps, lite
+        )
+    except RuntimeError:
+        if lite:
+            raise
+        _encode(
+            source_path, start, duration, crop_w, crop_h, x, ass_path, out_path, fps, True
+        )
     return out_path

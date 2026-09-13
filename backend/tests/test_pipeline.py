@@ -387,7 +387,16 @@ Dialogue: 0,0:00:00.00,0:00:01.50,Default,{\\fad(120,80)}Test caption
     w = int(cap.get(__import__("cv2").CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(__import__("cv2").CAP_PROP_FRAME_HEIGHT))
     cap.release()
-    assert (w, h) == (1080, 1920)
+    assert (w, h) in ((1080, 1920), (720, 1280))
+
+
+def test_lite_video_filter_skips_zoompan():
+    vf = render_mod.build_video_filter(
+        608, 1080, 100, duration=20.0, ass_path="/tmp/clip.ass", fps=30, lite=True
+    )
+    assert "zoompan=" not in vf
+    assert "scale=720:1280" in vf
+    assert "ass=" in vf
 
 
 # ---------------------------------------------------------------------------
