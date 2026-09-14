@@ -1,0 +1,20 @@
+[providers]
+python = "3.12"
+
+[phases.setup]
+aptPkgs = [
+  "pkg-config",
+  "ffmpeg",
+  "libavformat-dev",
+  "libavcodec-dev",
+  "libavdevice-dev",
+  "libavutil-dev",
+  "libavfilter-dev",
+  "libswscale-dev",
+  "libswresample-dev",
+  "libglib2.0-0",
+  "libgomp1"
+]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
