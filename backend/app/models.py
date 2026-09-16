@@ -17,8 +17,20 @@ class JobStatus(str, enum.Enum):
     failed = "failed"
 
 
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    google_sub: str = Field(unique=True, index=True)
+    email: str
+    name: Optional[str] = None
+    picture_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    jobs: List["Job"] = Relationship(back_populates="user")
+
+
 class Job(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
     youtube_url: str
     language: Optional[str] = None
     status: JobStatus = Field(default=JobStatus.queued)
@@ -27,6 +39,7 @@ class Job(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     video_path: Optional[str] = None
 
+    user: User = Relationship(back_populates="jobs")
     clips: List["Clip"] = Relationship(back_populates="job")
 
 

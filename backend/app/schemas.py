@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, HttpUrl
@@ -30,7 +31,27 @@ class JobRead(BaseModel):
     status: JobStatus
     progress_message: Optional[str]
     error: Optional[str]
+    created_at: datetime
     clips: List[ClipRead] = []
 
     class Config:
         from_attributes = True
+
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+
+class UserRead(BaseModel):
+    id: int
+    email: str
+    name: Optional[str]
+    picture_url: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    user: UserRead

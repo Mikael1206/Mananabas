@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     clip_min_seconds: int = 20
     clip_max_seconds: int = 90
 
+    # Auth (Google Sign-In + app-issued JWT)
+    google_client_id: str = ""
+    jwt_secret: str = ""
+    jwt_expire_minutes: int = 60 * 24 * 14  # 14 days
+
     @field_validator(
         "max_clips_per_job", "clip_min_seconds", "clip_max_seconds", mode="before"
     )
@@ -68,6 +73,15 @@ class Settings(BaseSettings):
         err = self.llm_key_error()
         if err:
             raise ValueError(err)
+
+    def google_auth_error(self) -> str | None:
+        """Same fail-clean pattern as llm_key_error(): a missing Google/JWT
+        config should 503 the auth endpoint, not crash the whole API."""
+        if not self.google_client_id:
+            return "GOOGLE_CLIENT_ID is not set. Add it in Railway Variables (or .env locally)."
+        if not self.jwt_secret:
+            return "JWT_SECRET is not set. Add it in Railway Variables (or .env locally)."
+        return None
 
 
 try:

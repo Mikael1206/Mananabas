@@ -10,6 +10,10 @@ numpy==1.26.4
 imageio-ffmpeg==0.5.1
 pydantic-settings==2.5.2
 
+# Auth: verify Google ID tokens, issue/verify our own app JWT
+google-auth==2.35.0
+PyJWT==2.9.0
+
 # Pick the LLM SDK(s) matching whichever provider you set in .env
 openai==1.51.0
 httpx<0.28.0
