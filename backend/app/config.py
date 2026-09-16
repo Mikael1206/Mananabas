@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_expire_minutes: int = 60 * 24 * 14  # 14 days
 
+    # YouTube cookies (optional, to bypass bot detection on datacenter/cloud IPs)
+    # youtube_cookies can contain Netscape cookies text or base64-encoded Netscape cookies text.
+    # youtube_cookies_file can be a file path to a cookies.txt file.
+    youtube_cookies: str = ""
+    youtube_cookies_file: str = ""
+
     @field_validator(
         "max_clips_per_job", "clip_min_seconds", "clip_max_seconds", mode="before"
     )
